@@ -1,0 +1,35 @@
+name: 每日定時更新財經新聞
+
+on:
+  schedule:
+    # 這裡代表每小時的 0 分會自動執行 (UTC 時間)
+    - cron: '0 * * * *'
+  workflow_dispatch: # 允許您在 GitHub 網頁上手動點擊按鈕立即更新
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 複製儲存庫檔案
+      uses: actions/checkout@v3
+
+    - name: 設定 Python 環境
+      uses: actions/setup-python@v4
+      with:
+        python-python-version: '3.10'
+
+    - name: 安裝必要的套件
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: 執行爬蟲腳本並生成新網頁
+      run: python fetch_news.py
+
+    - name: 將變更自動推回 GitHub 儲存庫
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add index.html
+        git commit -m "自動更新新聞: $(date)" || echo "沒有新內容需要更新"
+        git push
