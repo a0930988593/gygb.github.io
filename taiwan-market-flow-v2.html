@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>台股大盤資金流向</title>
+<style>
+:root{--bg:#05040c;--fg:#e3ddff;--mut:#8a84b5;--up:#ff5568;--dn:#35e8a2;--card:rgba(18,14,38,.8);--line:rgba(160,140,255,.28);box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#05040c;--fg:#e3ddff}}
+:root[data-theme="dark"]{--bg:#05040c;--fg:#e3ddff}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;overflow:hidden}
+#cv{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+#hud{position:absolute;left:14px;right:14px;top:calc(env(safe-area-inset-top,0px) + 10px);pointer-events:none;display:flex;justify-content:space-between;gap:10px}
+h1{margin:0;font-size:17px;letter-spacing:.04em}
+p{margin:4px 0 0;font-size:12px;color:var(--mut);line-height:1.5}
+.r{text-align:right;font-size:12px;color:var(--mut)}.r b{display:block;font-size:20px;color:var(--fg);font-variant-numeric:tabular-nums}
+.up{color:var(--up)}.dn{color:var(--dn)}.gd{color:#ff7ad9}.pp{color:#7a68b8}
+#tabs{position:absolute;right:14px;top:calc(env(safe-area-inset-top,0px) + 70px);display:flex;gap:6px}
+#tabs button{background:var(--card);color:var(--mut);border:1px solid var(--line);border-radius:6px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer}
+#tabs button.on{color:var(--fg);border-color:var(--fg)}
+#tabs button:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+#cards{position:absolute;left:0;right:0;bottom:env(safe-area-inset-bottom,0px);display:flex;gap:8px;padding:10px 14px;overflow-x:auto;background:linear-gradient(transparent,rgba(5,4,12,.92) 40%)}
+.c{flex:1 0 112px;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 10px}
+.c .n{font-size:12px;color:var(--mut)}.c .v{font-size:17px;font-weight:600;margin:2px 0;font-variant-numeric:tabular-nums}.c .d{font-size:12px;font-variant-numeric:tabular-nums}
+.bar{height:4px;background:var(--dn);margin-top:6px;position:relative}.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--up)}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hud">
+ <div><h1>台股大盤資金流向</h1><p><span class="gd">炫彩</span>粒子：資金流入類股（上漲）<br><span class="pp">暗紫</span>粒子：資金流出類股（下跌）<br>外圈：漲跌家數　拖曳旋轉，滾輪縮放</p></div>
+ <div class="r"><span id="clk"></span><b id="big"></b><span id="bigd"></span></div>
+</div>
+<div id="tabs"><button type="button" data-m="tse" class="on">上市</button><button type="button" data-m="otc">上櫃</button></div>
+<div id="cards"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+// 預設資料：截圖 10:41 的盤中快照（單位：% / 點）
+var D={time:'10:41（截圖）',
+ tse:{idx:['加權',46041.43,-846.34,-1.81],sec:{'水泥':2.83,'資訊':1.49,'食品':.83,'化學':-2.54,'電零':-3.64,'塑膠':-5.39},br:{lu:3,ld:5,u:247,d:766}},
+ otc:{idx:['櫃買',381.69,-13.73,-3.47],sec:{'資訊':.80,'文創':.45,'紡織':.06,'半導':-4.03,'電零':-5.04,'通信':-7.07},br:{lu:17,ld:11,u:146,d:659}},
+ fut:[['台指近',46272,-741,-1.58],['電指近',2878,-67.55,-2.29],['金指近',3751,41,1.11]]};
+var M='tse',SEC=[],MX=1,cum=[],c0=0;
+
+var cv=document.getElementById('cv'),R=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+R.setPixelRatio(Math.min(devicePixelRatio||1,2));
+var scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(50,1,.1,200),camZ=36,G=new THREE.Group();scene.add(G);
+var CORE=new THREE.Vector3(8,0,0);
+function glowTex(){var c=document.createElement('canvas');c.width=c.height=128;var x=c.getContext('2d'),g=x.createRadialGradient(64,64,0,64,64,64);g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(.25,'rgba(255,255,255,.5)');g.addColorStop(1,'rgba(255,255,255,0)');x.fillStyle=g;x.fillRect(0,0,128,128);return new THREE.CanvasTexture(c);}
+var GT=glowTex();
+function label(t,col,sw){var c=document.createElement('canvas');c.width=256;c.height=64;var x=c.getContext('2d');x.font='600 30px sans-serif';x.textAlign='center';x.fillStyle=col;x.shadowColor=col;x.shadowBlur=8;x.fillText(t,128,42);
+ var s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthWrite:false}));s.scale.set(sw,sw/4,1);return s;}
+function glow(col,size){var s=new THREE.Sprite(new THREE.SpriteMaterial({map:GT,color:col,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));s.scale.set(size,size,1);return s;}
+function clear(g){while(g.children.length){var o=g.children.pop();if(o.material){if(o.material.map&&o.material.map!==GT)o.material.map.dispose();o.material.dispose();}if(o.geometry)o.geometry.dispose();}}
+
+var coreG=new THREE.Group();coreG.position.copy(CORE);G.add(coreG);
+var coreFx=new THREE.Group();coreG.add(coreFx);
+var nodesG=new THREE.Group();G.add(nodesG);
+var rg=[];
+function ring(n,r,ratio,h,tilt){var p=new Float32Array(n*3),c=new Float32Array(n*3);
+ for(var i=0;i<n;i++){var a=Math.random()*6.283,rr=r+(Math.random()-.5)*.8;p[i*3]=Math.cos(a)*rr;p[i*3+1]=(Math.random()-.5)*h;p[i*3+2]=Math.sin(a)*rr;
+  var up=i<n*ratio;c[i*3]=up?1:.2;c[i*3+1]=up?.32:.95;c[i*3+2]=up?.4:.62;}
+ var g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));g.setAttribute('color',new THREE.BufferAttribute(c,3));
+ var o=new THREE.Points(g,new THREE.PointsMaterial({size:.2,map:GT,vertexColors:true,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));o.rotation.x=tilt;coreFx.add(o);rg.push(o);}
+
+function f2(v){return v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function sg(v){return(v>0?'+':'')+f2(v);}
+
+// 依目前資料重建場景
+function build(){
+ var d=D[M],up=d.idx[3]>=0;
+ clear(coreFx);rg=[];
+ coreFx.add(glow(up?0xff5568:0x35e8a2,11));coreFx.add(glow(0xffffff,2.4));
+ var cl=label(d.idx[0]+' '+f2(d.idx[1]),'#e3ddff',4.4);cl.position.set(0,-2.2,0);coreFx.add(cl);
+ var b=d.br;
+ if(b){ring(900,3.2,b.u/(b.u+b.d),.3,1.15);ring(500,4.6,b.lu/Math.max(1,b.lu+b.ld),.4,-.6);
+  var l=label('家數 '+b.u+'↑ '+b.d+'↓　漲停'+b.lu+' 跌停'+b.ld,'#e3ddff',6);l.position.set(0,5.9,0);}
+ clear(nodesG);
+ SEC=Object.keys(d.sec).map(function(k){return{n:k,p:d.sec[k]};}).sort(function(a,b){return b.p-a.p;});
+ var n=SEC.length,span=Math.max(5,Math.min(11,n*.9));
+ MX=Math.max.apply(null,SEC.map(function(s){return Math.abs(s.p);}).concat([.5]));
+ c0=0;cum=[];
+ SEC.forEach(function(s,i){
+  var th=i*1.9,yy=(1-2*(i+.5)/n)*span;
+  s.pos=new THREE.Vector3(-8+Math.cos(th)*3.5,yy,Math.sin(th)*5);
+  s.ctrl=s.pos.clone().add(CORE).multiplyScalar(.5).add(new THREE.Vector3(0,(yy>0?1:-1)*2.5,4*(i%2?1:-1)));
+  var u=s.p>=0,nd=glow(u?0xff5568:0x35e8a2,1.4+Math.sqrt(Math.abs(s.p)/MX)*2.6);nd.position.copy(s.pos);nodesG.add(nd);
+  var dt=glow(0xffffff,.9);dt.position.copy(s.pos);nodesG.add(dt);
+  var lb=label(s.n+' '+(u?'+':'')+s.p.toFixed(2)+'%',u?(i<3?'#ffd24a':'#ff8a98'):(i>=n-3?'#7fd8ff':'#6dffc3'),4.4);lb.position.copy(s.pos).add(new THREE.Vector3(0,-1.7,0));nodesG.add(lb);
+  c0+=Math.abs(s.p)+MX*.12;cum.push(c0);
+ });
+ NA=Math.min(N,1800+n*300);pg.setDrawRange(0,NA);for(var i=0;i<NA;i++)spawn(i,true);
+ // HUD 與卡片
+ var c=up?'up':'dn';
+ document.getElementById('big').textContent=f2(d.idx[1]);document.getElementById('big').className=c;
+ document.getElementById('bigd').textContent=d.idx[0]+' '+sg(d.idx[2])+'（'+sg(d.idx[3])+'%）';
+ document.getElementById('clk').textContent=D.time||'';
+ var h='';
+ var fm={};(D.fut||[]).forEach(function(x){fm[x[0]]=x;});
+ [d.idx,fm['台指近']||['台指近'],fm['電指近']||['電指近'],fm['金指近']||['金指近']].forEach(function(x){if(x.length<4){h+='<div class="c"><div class="n">'+x[0]+'</div><div class="v" style="color:var(--mut)">—</div><div class="d" style="color:var(--mut)">無即時資料</div></div>';return;}var k=x[3]>=0?'up':'dn';h+='<div class="c"><div class="n">'+x[0]+'</div><div class="v '+k+'">'+f2(x[1])+'</div><div class="d '+k+'">'+(x[3]>=0?'▲':'▼')+Math.abs(x[2]).toFixed(2)+'（'+Math.abs(x[3]).toFixed(2)+'%）</div></div>';});
+ if(!b)h+='<div class="c"><div class="n">漲跌家數</div><div class="v" style="color:var(--mut)">—</div><div class="d" style="color:var(--mut)">無即時資料</div></div>';else h+='<div class="c"><div class="n">漲跌家數</div><div class="v"><span class="up">'+b.u+'</span> / <span class="dn">'+b.d+'</span></div><div class="d"><span class="up">漲停'+b.lu+'</span> <span class="dn">跌停'+b.ld+'</span></div><div class="bar"><i style="width:'+(b.u/(b.u+b.d)*100).toFixed(1)+'%"></i></div></div>';
+ var up2=SEC.filter(function(s){return s.p>=0;}).length;
+ h+='<div class="c"><div class="n">類股漲跌</div><div class="v"><span class="up">'+up2+'</span> / <span class="dn">'+(SEC.length-up2)+'</span></div><div class="d">'+(M==='tse'?'上市':'上櫃')+'共 '+SEC.length+' 類'+(d.note?'（'+d.note+'）':'')+'</div></div>';
+ document.getElementById('cards').innerHTML=h;
+}
+
+// 粒子
+var UPC=[[1,.15,.65],[.65,.25,1],[.15,.85,1],[1,.78,.2]],N=9000,NA=3200,pos=new Float32Array(N*3),col=new Float32Array(N*3),P={h:new Float32Array(N),s:new Int16Array(N),t:new Float32Array(N),v:new Float32Array(N),d:new Int8Array(N),j:new Float32Array(N*3)};
+function spawn(i,init){var r=Math.random()*c0,k=0;while(k<cum.length-1&&cum[k]<r)k++;var s=SEC[k];P.s[i]=k;P.d[i]=s.p>=0?-1:1;
+ P.t[i]=init?Math.random():0;P.h[i]=Math.random();P.v[i]=(.14+Math.random()*.2)*(1+Math.abs(s.p)/MX);
+ for(var q=0;q<3;q++)P.j[i*3+q]=(Math.random()-.5)*1.3;}
+var pg=new THREE.BufferGeometry();pg.setAttribute('position',new THREE.BufferAttribute(pos,3));pg.setAttribute('color',new THREE.BufferAttribute(col,3));
+G.add(new THREE.Points(pg,new THREE.PointsMaterial({size:.46,map:GT,vertexColors:true,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false})));
+
+// 上市／上櫃切換
+document.getElementById('tabs').addEventListener('click',function(e){var m=e.target.getAttribute&&e.target.getAttribute('data-m');if(!m)return;M=m;
+ [].forEach.call(this.children,function(b){b.className=b.getAttribute('data-m')===m?'on':'';});build();});
+
+// 即時資料入口：setMarket({time,tse:{idx,sec,br},otc:{...},fut})
+// 結構與 D 相同；沒提供 br / fut 的欄位會被清除，避免新舊資料混在一起
+window.setMarket=function(o){['tse','otc'].forEach(function(k){if(o[k])D[k]={idx:o[k].idx,sec:o[k].sec,br:o[k].br||null,note:o[k].note||''};});
+ D.fut=o.fut||null;if(o.time)D.time=o.time;build();};
+// 本機執行 flow_server.py 時，每 3 秒取得真實資料
+if(/^(localhost|127\.0\.0\.1)$/.test(location.hostname)){var poll=function(){fetch('/market').then(function(r){return r.json();}).then(window.setMarket).catch(function(){});};poll();setInterval(poll,3000);}
+
+// 互動與繪製
+var drag=false,lx=0,ly=0;
+cv.addEventListener('pointerdown',function(e){drag=true;lx=e.clientX;ly=e.clientY;cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointerup',function(){drag=false;});
+cv.addEventListener('pointermove',function(e){if(!drag)return;G.rotation.y+=(e.clientX-lx)*.005;G.rotation.x=Math.max(-.8,Math.min(.8,G.rotation.x+(e.clientY-ly)*.004));lx=e.clientX;ly=e.clientY;});
+cv.addEventListener('wheel',function(e){e.preventDefault();camZ=Math.max(14,Math.min(60,camZ+e.deltaY*.02));},{passive:false});
+function resize(){var w=innerWidth,h=innerHeight;R.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();}
+addEventListener('resize',resize);resize();
+var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches,prev=performance.now(),el=0;
+function frame(now){
+ var dt=Math.min(.05,(now-prev)/1000);prev=now;el+=dt;
+ cam.position.set(0,-1,camZ*(innerWidth/innerHeight<.8?1.6:1));cam.lookAt(0,-1.5,0);
+ if(!drag&&!reduce)G.rotation.y+=(Math.sin(el*.15)*.25-G.rotation.y)*dt*.5;
+ if(rg[0])rg[0].rotation.z+=dt*.4;if(rg[1])rg[1].rotation.z-=dt*.25;
+ var pl=1+Math.sin(el*2)*.04;coreG.scale.set(pl,pl,pl);
+ for(var i=0;i<NA;i++){
+  P.t[i]+=P.v[i]*dt*(reduce?.3:1);if(P.t[i]>=1)spawn(i,false);
+  var t=P.t[i],s=SEC[P.s[i]],a=P.d[i]>0?s.pos:CORE,b=P.d[i]>0?CORE:s.pos,c=s.ctrl,u=1-t,w=Math.sin(Math.PI*t),k=i*3;
+  pos[k]=u*u*a.x+2*u*t*c.x+t*t*b.x+P.j[k]*w;pos[k+1]=u*u*a.y+2*u*t*c.y+t*t*b.y+P.j[k+1]*w;pos[k+2]=u*u*a.z+2*u*t*c.z+t*t*b.z+P.j[k+2]*w;
+  var br=Math.pow(w,.6);
+  var h=P.h[i];
+  if(P.d[i]<0){var c4=h>.93?[1,.95,.85]:UPC[Math.floor(h/.93*4)%4];col[k]=c4[0]*br;col[k+1]=c4[1]*br;col[k+2]=c4[2]*br;}else{col[k]=.32*br;col[k+1]=.2*br;col[k+2]=.64*br;}
+ }
+ pg.attributes.position.needsUpdate=true;pg.attributes.color.needsUpdate=true;
+ R.render(scene,cam);requestAnimationFrame(frame);
+}
+build();requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
